@@ -1,0 +1,1249 @@
+<!DOCTYPE html>
+<html lang="pt-BR"><head><meta charset="utf-8">
+<title>S2-CP02 Projeto Motiva - OTA</title><style>
+@page { size: A4; margin: 16mm 14mm; }
+* { box-sizing: border-box; }
+body { font-family: -apple-system, 'Helvetica Neue', Arial, sans-serif;
+       font-size: 10pt; line-height: 1.5; color: #1a1a1a; margin: 0; }
+h1 { font-size: 20pt; margin: 0 0 4px; letter-spacing: -.3px; }
+h2 { font-size: 13pt; margin: 22px 0 8px; padding-bottom: 5px;
+     border-bottom: 2px solid #c8102e; page-break-after: avoid; }
+h3 { font-size: 11pt; margin: 14px 0 6px; page-break-after: avoid; }
+p  { margin: 6px 0; }
+.sub { color: #555; font-size: 10.5pt; margin-bottom: 2px; }
+.capa { border-left: 4px solid #c8102e; padding-left: 14px; margin-bottom: 18px; }
+table { border-collapse: collapse; width: 100%; margin: 8px 0 12px; font-size: 9.5pt; }
+th { background: #f0f0f2; text-align: left; font-weight: 600; }
+th, td { border: 1px solid #d5d5da; padding: 5px 8px; vertical-align: top; }
+td.ok { color: #0a7a35; font-weight: 600; }
+pre.code { background: #f7f7f9; border: 1px solid #e0e0e6; border-radius: 4px;
+           padding: 8px 10px; font-family: 'SF Mono', Menlo, Consolas, monospace;
+           font-size: 6.6pt; line-height: 1.35; white-space: pre-wrap;
+           word-break: break-word; overflow-wrap: anywhere; }
+pre.code .ln { color: #b0b0b8; user-select: none; }
+a { color: #0b57d0; text-decoration: none; word-break: break-all; }
+figure { margin: 10px 0; page-break-inside: avoid; }
+figure img { width: 100%; border: 1px solid #d5d5da; border-radius: 4px; }
+figcaption { font-size: 8.5pt; color: #666; margin-top: 3px; text-align: center; }
+.quebra { page-break-before: always; }
+.nota { background: #fff8e1; border-left: 3px solid #f0ad00;
+        padding: 7px 11px; margin: 10px 0; font-size: 9.5pt; }
+.ascii { font-family: 'SF Mono', Menlo, Consolas, monospace; font-size: 8pt;
+         line-height: 1.3; background: #f7f7f9; border: 1px solid #e0e0e6;
+         border-radius: 4px; padding: 10px; white-space: pre; }
+</style></head><body>
+
+<div class="capa">
+<h1>Projeto Motiva &mdash; Atualizacao Remota de Firmware (OTA)</h1>
+<p class="sub">S2-CP02 &middot; Professor Marcelo Fernando Morgantini</p>
+<p class="sub">No IoT de monitoramento de vegetacao em ESP32 simulado no Wokwi</p>
+<p class="sub">21/09/2026</p>
+</div>
+
+<h2>1. Integrantes</h2>
+<table><thead><tr><th>Nome</th><th>RM</th></tr></thead><tbody><tr><td>Helena Barbosa Costa</td><td>562450</td></tr><tr><td>Henrique Mandrick</td><td>562715</td></tr><tr><td>Mateus Scandiuzzi Valente Tomomitsu</td><td>561565</td></tr><tr><td>Ryan Amorim de Castro Santana</td><td>564393</td></tr><tr><td>Thomas Joh Kobayashi</td><td>562758</td></tr></tbody></table>
+
+<h2>2. Links da entrega</h2>
+<table><thead><tr><th>Item</th><th>Link</th></tr></thead><tbody><tr><td>Projeto Wokwi (publico)</td><td><a href="https://wokwi.com/projects/475816561802161153">https://wokwi.com/projects/475816561802161153</a></td></tr><tr><td>Repositorio remoto (OTA)</td><td><a href="https://github.com/henrikmm/motiva-ota-cp2">https://github.com/henrikmm/motiva-ota-cp2</a></td></tr><tr><td>Manifesto de versao</td><td><a href="https://raw.githubusercontent.com/henrikmm/motiva-ota-cp2/main/version.json">https://raw.githubusercontent.com/henrikmm/motiva-ota-cp2/main/version.json</a></td></tr><tr><td>Binario da versao 2.0</td><td><a href="https://raw.githubusercontent.com/henrikmm/motiva-ota-cp2/main/firmware_v2.bin">https://raw.githubusercontent.com/henrikmm/motiva-ota-cp2/main/firmware_v2.bin</a></td></tr></tbody></table>
+<p>A estrutura permanece ativa e publica por, no minimo, 10 dias para validacao.</p>
+
+<h2>3. Arquitetura da solucao</h2>
+<div class="ascii">ESP32 / Wokwi                 Internet                Repositorio remoto
+  +--------------+              (Wokwi-GUEST)           +------------------+
+  | Firmware 1.0 | ---- HTTPS GET version.json -------&gt; | version.json     |
+  |              | &lt;--- { &quot;version&quot;: &quot;2.0&quot;, ... } ----- |                  |
+  |  compara     |                                      |                  |
+  |  1.0 &lt; 2.0   | ---- HTTPS GET firmware_v2.bin ----&gt; | firmware_v2.bin  |
+  |              | &lt;--- 1.025.120 bytes --------------- |                  |
+  | grava OTA    |                                      +------------------+
+  | ESP.restart()|
+  +------+-------+
+         |
+  +------v-------+
+  | Firmware 2.0 |  ordenacao + mediana + histerese
+  +--------------+</div>
+<p><strong>Fluxo:</strong> consultar versao &rarr; comparar &rarr; baixar .bin &rarr; atualizar &rarr; reiniciar.</p>
+
+<h3>Particionamento e por que o OTA funciona</h3>
+<p>O ESP32 e compilado no esquema <strong>Default 4MB with spiffs</strong>, que reserva duas
+particoes de aplicacao de <strong>1.310.720 bytes</strong> (<code>app0</code> e <code>app1</code>).
+O firmware em execucao ocupa uma delas; a biblioteca <code>HTTPUpdate</code> grava o binario
+recebido na outra e marca, na particao <code>otadata</code>, qual deve ser carregada no proximo
+boot. Por isso o <code>ESP.restart()</code> ja sobe na versao 2.0.</p>
+<p>O <code>firmware_v2.bin</code> ocupa <strong>1,025,120 bytes (78%)</strong>
+da particao. O <code>build.sh</code> falha propositalmente se esse limite for ultrapassado.</p>
+<div class="nota"><strong>Detalhe observado na demonstracao:</strong> apos o <code>ESP.restart()</code>
+do OTA, o contador de <code>millis()</code> do Firmware 2.0 nao reiniciou em zero (ver secao 9): ele
+continuou a partir de onde estava antes do reset. Isso e comportamento real do ESP32 &mdash; um
+reset por software (<code>SW_CPU_RESET</code>) reinicia a CPU mas nao zera o dominio de tempo da
+RTC, diferente de um power-on reset (<code>POWERON_RESET</code>), que zera tudo. O log confirma os
+dois tipos de reset nos momentos certos.</div>
+
+<h3>Hardware simulado</h3>
+<table><thead><tr><th>Componente</th><th>Ligacao</th></tr></thead><tbody><tr><td>ESP32 DevKit C v4</td><td>-</td></tr><tr><td>LED RGB (catodo comum) - canal R</td><td>GPIO 25 -&gt; resistor 220 ohm</td></tr><tr><td>LED RGB (catodo comum) - canal G</td><td>GPIO 26 -&gt; resistor 220 ohm</td></tr><tr><td>LED RGB (catodo comum) - canal B</td><td>GPIO 27 -&gt; resistor 220 ohm</td></tr><tr><td>LED RGB - COM</td><td>GND</td></tr></tbody></table>
+
+<h3>Indicacao por LED</h3>
+<table><thead><tr><th>Situacao</th><th>Cor</th></tr></thead><tbody><tr><td>Firmware 1.0 em execucao</td><td>Azul</td></tr><tr><td>Download/gravacao OTA em andamento</td><td>Magenta</td></tr><tr><td>Firmware 2.0 - estado NORMAL</td><td>Verde</td></tr><tr><td>Firmware 2.0 - estado ALERTA</td><td>Vermelho</td></tr></tbody></table>
+
+<h2>4. Temporizacao das sessoes</h2>
+<p>O enunciado exige que a nova sessao comece <strong>48 s apos o inicio da anterior</strong>,
+e nao 48 s depois da quinta leitura:</p>
+<div class="ascii">00 s -> leitura 1      (5 leituras x 2 s = 8 s de aquisicao)
+02 s -> leitura 2
+04 s -> leitura 3
+06 s -> leitura 4
+08 s -> leitura 5
+48 s -> inicio da sessao seguinte      &lt;- e nao 56 s</div>
+<p>A implementacao <strong>nao usa <code>delay()</code> longo</strong>. Cada sessao, ao comecar, ja
+agenda a proxima em <code>tInicioSessao + 48000</code>, e o <code>loop()</code> compara o relogio
+com <code>millis()</code>. Toda comparacao usa <code>(int32_t)(millis() - alvo) &gt;= 0</code>, forma
+que continua correta quando <code>millis()</code> estoura em 32 bits (a cada ~49 dias).</p>
+<p>Cada cabecalho de sessao imprime o instante e o intervalo medido desde a sessao anterior,
+o que comprova o requisito diretamente no Serial Monitor.</p>
+
+<h2>5. Conceitos aplicados</h2>
+<h3>Media</h3>
+<p>Soma das 5 leituras dividida por 5. E sensivel a valores extremos: uma unica leitura muito
+alta desloca a media inteira.</p>
+<h3>Mediana</h3>
+<p>Valor central do vetor <strong>ordenado</strong>. Com 5 leituras, e o terceiro elemento
+(<code>ordenado[2]</code>). A ordenacao e feita no proprio programa, por <strong>insercao</strong>,
+sobre uma copia do vetor &mdash; a ordem original e preservada para exibicao.</p>
+<p>A mediana e usada na decisao de estado por ser <strong>robusta a outliers</strong>: uma leitura
+espuria de 20 cm no meio de um canteiro de 12 cm move a media, mas nao move a mediana. Em um
+sensor de campo, isso evita alarmes falsos.</p>
+<h3>Histerese</h3>
+<table><thead><tr><th>Condicao</th><th>Comportamento</th></tr></thead><tbody><tr><td>mediana &gt;= 16 cm</td><td>entra em ALERTA</td></tr><tr><td>14 cm &lt; mediana &lt; 16 cm</td><td>mantem o estado anterior</td></tr><tr><td>mediana &lt;= 14 cm</td><td>entra/retorna para NORMAL</td></tr></tbody></table>
+<p>Sem histerese, uma vegetacao oscilando entre 15 e 16 cm faria o LED piscar entre verde e
+vermelho a cada sessao. Com a faixa morta, o estado so muda quando a medida ultrapassa uma das
+bordas de forma decisiva.</p>
+<div class="nota"><strong>Observacao sobre o enunciado:</strong> o "exemplo de comportamento" da
+secao 9 cita medianas de 14,5 cm. Como as leituras sao inteiras (10 a 20 cm), a mediana de cinco
+valores e <strong>sempre inteira</strong> &mdash; a faixa de manutencao contem unicamente a mediana
+<strong>15 cm</strong>. A implementacao segue a tabela normativa, que e a regra.</div>
+<h3>Por que OTA e util em campo</h3>
+<p>Os nos da Motiva ficam instalados em areas de dificil acesso, por vezes a quilometros de
+estrada. Sem OTA, corrigir um calculo errado ou mudar um limiar exigiria deslocar uma equipe ate
+cada equipamento, com custo de viagem, risco operacional e janela de indisponibilidade. Com OTA,
+a correcao e publicada uma vez no repositorio e todos os nos se atualizam sozinhos na proxima
+janela de comunicacao.</p>
+
+<h2>6. Bibliotecas utilizadas</h2>
+<table><thead><tr><th>Biblioteca</th><th>Origem</th><th>Funcao no projeto</th></tr></thead><tbody><tr><td>WiFi.h</td><td>core ESP32</td><td>conecta a rede virtual Wokwi-GUEST</td></tr><tr><td>WiFiClientSecure.h</td><td>core ESP32</td><td>socket TLS para falar com o GitHub via HTTPS</td></tr><tr><td>HTTPClient.h</td><td>core ESP32</td><td>requisicao GET do version.json</td></tr><tr><td>HTTPUpdate.h</td><td>core ESP32</td><td>baixa o .bin e grava na particao OTA inativa</td></tr></tbody></table>
+<p><strong>Nenhuma biblioteca de terceiros e usada.</strong> O <code>version.json</code> tem formato
+fixo e conhecido, entao e lido por uma funcao propria (<code>extrairValorJson</code>) em vez de um
+parser JSON externo &mdash; isso elimina uma dependencia, reduz o binario e mantem o projeto
+compilavel no Wokwi sem configuracao adicional.</p>
+<p>A comparacao de versoes e <strong>numerica</strong>, nao textual: <code>"2.0"</code> vira
+<code>200</code> e <code>"1.0"</code> vira <code>100</code>. Comparar strings quebraria em um futuro
+<code>"10.0"</code>, que e textualmente menor que <code>"2.0"</code>.</p>
+
+<h2>7. Tratamento de situacoes previstas</h2>
+<table><thead><tr><th>Situacao</th><th>Mensagem no Serial Monitor</th></tr></thead><tbody><tr><td>Sem conexao Wi-Fi</td><td>[OTA] ERRO: nao foi possivel conectar ao Wi-Fi.</td></tr><tr><td>Manifesto inacessivel</td><td>[OTA] ERRO: manifesto inacessivel (HTTP &lt;codigo&gt;).</td></tr><tr><td>Manifesto malformado</td><td>[OTA] ERRO: manifesto sem os campos &quot;version&quot; e &quot;url&quot;.</td></tr><tr><td>Ja esta na versao mais recente</td><td>[OTA] Firmware ja esta na versao mais recente.</td></tr><tr><td>Download ou gravacao falhou</td><td>[OTA] ERRO &lt;n&gt; durante a atualizacao: &lt;descricao&gt;</td></tr></tbody></table>
+<p>Em todos os casos de falha o no <strong>continua medindo normalmente</strong> na versao atual.
+Uma atualizacao que nao deu certo nunca derruba o servico de medicao.</p>
+
+<h2>8. Testes obrigatorios</h2>
+<table><thead><tr><th>Teste</th><th>Condicao</th><th>Resultado esperado</th></tr></thead><tbody><tr><td>1</td><td>Firmware 1.0</td><td>5 leituras, media e LED da versao 1.0</td></tr><tr><td>2</td><td>Sessao completa</td><td>Nova sessao iniciando em 48 s, e nao 56 s</td></tr><tr><td>3</td><td>Manifesto indica versao 2.0</td><td>ESP32 identifica atualizacao disponivel, apos 3 ciclos</td></tr><tr><td>4</td><td>OTA executada</td><td>ESP32 reinicia executando Firmware 2.0</td></tr><tr><td>5</td><td>Firmware 2.0</td><td>Media, ordenacao e mediana exibidas corretamente</td></tr><tr><td>6</td><td>Mediana &gt;= 16 cm</td><td>Estado ALERTA e indicacao vermelha</td></tr><tr><td>7</td><td>Mediana entre 14 e 16 cm</td><td>Estado anterior mantido</td></tr><tr><td>8</td><td>Mediana &lt;= 14 cm</td><td>Estado NORMAL e indicacao verde</td></tr></tbody></table>
+
+<h2>9. Evidencias</h2>
+<p><strong>Metodologia de validacao:</strong> a fila de compilacao gratuita do editor web do Wokwi
+apresentou instabilidade recorrente ("Build Servers Busy" / "Failed to fetch") durante os testes.
+Para nao depender dela, o grupo compilou os dois firmwares localmente com o <code>arduino-cli</code>
+(o mesmo binario que e publicado no repositorio) e executou a simulacao completa pela
+<strong>Wokwi CLI</strong> (<code>wokwi-cli</code>), que usa o mesmo motor de simulacao em nuvem do
+editor web, valida o <code>diagram.json</code> e reproduz fielmente Wi-Fi, HTTPS e a gravacao OTA.
+O log abaixo e a saida real e integral do Serial Monitor dessa execucao, sem edicao de conteudo
+(apenas uma quebra de linha reconstituida onde a captura uniu duas mensagens). O projeto publicado
+no link da secao 2 roda o mesmo codigo e pode ser reexecutado a qualquer momento clicando em Play.</p>
+<figure><img src="docs/03_led_azul_fw1.png"/><figcaption>03 led azul fw1</figcaption></figure>
+<h3>01_serial_fw1_fluxo_ota_completo.txt</h3>
+<pre class="code">ets Jul 29 2019 12:21:46
+
+rst:0x1 (POWERON_RESET),boot:0x13 (SPI_FAST_FLASH_BOOT)
+configsip: 0, SPIWP:0xee
+clk_drv:0x00,q_drv:0x00,d_drv:0x00,cs0_drv:0x00,hd_drv:0x00,wp_drv:0x00
+mode:DIO, clock div:1
+load:0x3fff0030,len:4876
+ho 0 tail 12 room 4
+load:0x40078000,len:16532
+load:0x40080400,len:3500
+entry 0x400805b4
+
+########################################
+  PROJETO MOTIVA - FIRMWARE 1.0
+  No de monitoramento de vegetacao
+  Verificacao OTA apos 3 sessoes
+########################################
+
+========================================
+MONITORAMENTO DE VEGETACAO - FW 1.0
+========================================
+Sessao 1 | t = 1.75 s | intervalo desde a sessao anterior: 0.00 s
+Leitura 1: 17 cm
+Leitura 2: 14 cm
+Leitura 3: 16 cm
+Leitura 4: 17 cm
+Leitura 5: 11 cm
+Media da sessao: 15.0 cm
+Proxima sessao em 48 segundos.
+
+========================================
+MONITORAMENTO DE VEGETACAO - FW 1.0
+========================================
+Sessao 2 | t = 49.75 s | intervalo desde a sessao anterior: 48.00 s
+Leitura 1: 16 cm
+Leitura 2: 18 cm
+Leitura 3: 12 cm
+Leitura 4: 16 cm
+Leitura 5: 15 cm
+Media da sessao: 15.4 cm
+Proxima sessao em 48 segundos.
+
+========================================
+MONITORAMENTO DE VEGETACAO - FW 1.0
+========================================
+Sessao 3 | t = 97.75 s | intervalo desde a sessao anterior: 48.00 s
+Leitura 1: 10 cm
+Leitura 2: 16 cm
+Leitura 3: 17 cm
+Leitura 4: 18 cm
+Leitura 5: 20 cm
+Media da sessao: 16.2 cm
+Proxima sessao em 48 segundos.
+
+----------------------------------------
+VERIFICACAO DE ATUALIZACAO (apos 3 sessoes)
+Versao instalada: 1.0
+----------------------------------------
+[OTA] Conectando a rede &quot;Wokwi-GUEST&quot;...
+.....
+[OTA] Wi-Fi conectado. IP: 10.13.37.2
+[OTA] Consultando manifesto: https://raw.githubusercontent.com/henrikmm/motiva-ota-cp2/main/version.json
+[OTA] Manifesto recebido:
+{
+  &quot;version&quot;: &quot;2.0&quot;,
+  &quot;url&quot;: &quot;https://raw.githubusercontent.com/henrikmm/motiva-ota-cp2/main/firmware_v2.bin&quot;,
+  &quot;notes&quot;: &quot;Ordenacao crescente das leituras, calculo da mediana e histerese NORMAL/ALERTA com indicacao por LED RGB.&quot;,
+  &quot;size&quot;: 1025120,
+  &quot;sha256&quot;: &quot;f33e883e79e446a1a9c4ea5ce4f04276d3b8a45f8f524ef7df4b90182943c527&quot;
+}
+
+[OTA] Versao instalada: 1.0 | versao disponivel: 2.0
+[OTA] Atualizacao disponivel. Iniciando download...
+[OTA] Baixando firmware: https://raw.githubusercontent.com/henrikmm/motiva-ota-cp2/main/firmware_v2.bin
+[OTA] Download: 0% (0 / 1025120 bytes)
+[OTA] Download: 10% (106496 / 1025120 bytes)
+[OTA] Download: 20% (208896 / 1025120 bytes)
+[OTA] Download: 30% (311296 / 1025120 bytes)
+[OTA] Download: 40% (413696 / 1025120 bytes)
+[OTA] Download: 50% (516096 / 1025120 bytes)
+[OTA] Download: 60% (618496 / 1025120 bytes)
+[OTA] Download: 70% (720896 / 1025120 bytes)
+[OTA] Download: 80% (823296 / 1025120 bytes)
+[OTA] Download: 90% (925696 / 1025120 bytes)
+[OTA] Download: 100% (1025120 / 1025120 bytes)
+[OTA] Gravacao concluida com sucesso.
+[OTA] Reiniciando o ESP32 para executar o Firmware 2.0...
+ets Jul 29 2019 12:21:46
+
+rst:0xc (SW_CPU_RESET),boot:0x13 (SPI_FAST_FLASH_BOOT)
+configsip: 0, SPIWP:0xee
+clk_drv:0x00,q_drv:0x00,d_drv:0x00,cs0_drv:0x00,hd_drv:0x00,wp_drv:0x00
+mode:DIO, clock div:1
+load:0x3fff0030,len:4876
+ho 0 tail 12 room 4
+load:0x40078000,len:16532
+load:0x40080400,len:3500
+entry 0x400805b4
+
+########################################
+  PROJETO MOTIVA - FIRMWARE 2.0
+  Atualizacao OTA concluida com sucesso
+  Novos recursos: ordenacao, mediana e histerese
+  Comandos de teste: T1 / T2 / T3
+########################################
+
+----------------------------------------
+VERIFICACAO DE VERSAO APOS O BOOT
+Versao instalada: 2.0
+----------------------------------------
+[OTA] Conectando a rede &quot;Wokwi-GUEST&quot;...
+.....
+[OTA] Wi-Fi conectado. IP: 10.13.37.2
+[OTA] Versao instalada: 2.0 | versao disponivel: 2.0
+[OTA] Firmware ja esta na versao mais recente. Nenhuma acao necessaria.
+
+========================================
+MONITORAMENTO DE VEGETACAO - FW 2.0
+========================================
+Sessao 1 | t = 158.08 s | intervalo desde a sessao anterior: 0.00 s
+Leitura 1: 10 cm
+Leitura 2: 16 cm
+Leitura 3: 13 cm
+Leitura 4: 19 cm
+Leitura 5: 15 cm
+Valores na ordem original : 10  16  13  19  15 cm
+Valores em ordem crescente: 10  13  15  16  19 cm
+Media da sessao: 14.6 cm
+Mediana da sessao: 15 cm
+Histerese: 14 cm &lt; mediana &lt; 16 cm -&gt; faixa de histerese, estado mantido
+Estado anterior: NORMAL | Estado atual: NORMAL
+LED: VERDE
+Proxima sessao em 48 segundos.
+</pre>
+<h3>02_serial_fw2_histerese_T1_T2_T3_T2.txt</h3>
+<pre class="code">ets Jul 29 2019 12:21:46
+
+rst:0x1 (POWERON_RESET),boot:0x13 (SPI_FAST_FLASH_BOOT)
+configsip: 0, SPIWP:0xee
+clk_drv:0x00,q_drv:0x00,d_drv:0x00,cs0_drv:0x00,hd_drv:0x00,wp_drv:0x00
+mode:DIO, clock div:1
+load:0x3fff0030,len:4876
+ho 0 tail 12 room 4
+load:0x40078000,len:16532
+load:0x40080400,len:3500
+entry 0x400805b4
+
+########################################
+  PROJETO MOTIVA - FIRMWARE 2.0
+  Atualizacao OTA concluida com sucesso
+  Novos recursos: ordenacao, mediana e histerese
+  Comandos de teste: T1 / T2 / T3
+########################################
+
+----------------------------------------
+VERIFICACAO DE VERSAO APOS O BOOT
+Versao instalada: 2.0
+----------------------------------------
+[OTA] Conectando a rede &quot;Wokwi-GUEST&quot;...
+.....
+[OTA] Wi-Fi conectado. IP: 10.13.37.2
+[OTA] Versao instalada: 2.0 | versao disponivel: 2.0
+[OTA] Firmware ja esta na versao mais recente. Nenhuma acao necessaria.
+
+========================================
+MONITORAMENTO DE VEGETACAO - FW 2.0
+========================================
+Sessao 1 | t = 6.53 s | intervalo desde a sessao anterior: 0.00 s
+Leitura 1: 15 cm
+Leitura 2: 19 cm
+Leitura 3: 10 cm
+Leitura 4: 20 cm
+Leitura 5: 18 cm
+Valores na ordem original : 15  19  10  20  18 cm
+Valores em ordem crescente: 10  15  18  19  20 cm
+Media da sessao: 16.4 cm
+Mediana da sessao: 18 cm
+Histerese: mediana &gt;= 16 cm -&gt; entra em ALERTA
+Estado anterior: NORMAL | Estado atual: ALERTA
+LED: VERMELHO
+Proxima sessao em 48 segundos.
+
+----------------------------------------
+SESSAO DE TESTE INJETADA - T1: mediana &gt;= 16 cm
+----------------------------------------
+Leitura 1: 18 cm
+Leitura 2: 16 cm
+Leitura 3: 17 cm
+Leitura 4: 20 cm
+Leitura 5: 16 cm
+Valores na ordem original : 18  16  17  20  16 cm
+Valores em ordem crescente: 16  16  17  18  20 cm
+Media da sessao: 17.4 cm
+Mediana da sessao: 17 cm
+Histerese: mediana &gt;= 16 cm -&gt; entra em ALERTA
+Estado anterior: ALERTA | Estado atual: ALERTA
+LED: VERMELHO
+
+----------------------------------------
+SESSAO DE TESTE INJETADA - T2: 14 cm &lt; mediana &lt; 16 cm
+----------------------------------------
+Leitura 1: 13 cm
+Leitura 2: 15 cm
+Leitura 3: 20 cm
+Leitura 4: 15 cm
+Leitura 5: 12 cm
+Valores na ordem original : 13  15  20  15  12 cm
+Valores em ordem crescente: 12  13  15  15  20 cm
+Media da sessao: 15.0 cm
+Mediana da sessao: 15 cm
+Histerese: 14 cm &lt; mediana &lt; 16 cm -&gt; faixa de histerese, estado mantido
+Estado anterior: ALERTA | Estado atual: ALERTA
+LED: VERMELHO
+
+----------------------------------------
+SESSAO DE TESTE INJETADA - T3: mediana &lt;= 14 cm
+----------------------------------------
+Leitura 1: 10 cm
+Leitura 2: 14 cm
+Leitura 3: 13 cm
+Leitura 4: 12 cm
+Leitura 5: 14 cm
+Valores na ordem original : 10  14  13  12  14 cm
+Valores em ordem crescente: 10  12  13  14  14 cm
+Media da sessao: 12.6 cm
+Mediana da sessao: 13 cm
+Histerese: mediana &lt;= 14 cm -&gt; entra/retorna para NORMAL
+Estado anterior: ALERTA | Estado atual: NORMAL
+LED: VERDE
+
+----------------------------------------
+SESSAO DE TESTE INJETADA - T2: 14 cm &lt; mediana &lt; 16 cm
+----------------------------------------
+Leitura 1: 13 cm
+Leitura 2: 15 cm
+Leitura 3: 20 cm
+Leitura 4: 15 cm
+Leitura 5: 12 cm
+Valores na ordem original : 13  15  20  15  12 cm
+Valores em ordem crescente: 12  13  15  15  20 cm
+Media da sessao: 15.0 cm
+Mediana da sessao: 15 cm
+Histerese: 14 cm &lt; mediana &lt; 16 cm -&gt; faixa de histerese, estado mantido
+Estado anterior: NORMAL | Estado atual: NORMAL
+LED: VERDE
+</pre>
+
+<div class="quebra"></div>
+<h2>10. Arquivo version.json</h2>
+<pre class="code">{
+  &quot;version&quot;: &quot;2.0&quot;,
+  &quot;url&quot;: &quot;https://raw.githubusercontent.com/henrikmm/motiva-ota-cp2/main/firmware_v2.bin&quot;,
+  &quot;notes&quot;: &quot;Ordenacao crescente das leituras, calculo da mediana e histerese NORMAL/ALERTA com indicacao por LED RGB.&quot;,
+  &quot;size&quot;: 1025120,
+  &quot;sha256&quot;: &quot;f33e883e79e446a1a9c4ea5ce4f04276d3b8a45f8f524ef7df4b90182943c527&quot;
+}
+</pre>
+
+<h2>11. Arquivo firmware_v2.bin</h2>
+<p>O binario nao pode ser embutido em PDF. Ele esta publicado no repositorio e e o arquivo
+efetivamente baixado pelo ESP32 durante a demonstracao. Sua identidade e comprovada pelo hash:</p>
+<table><thead><tr><th>Atributo</th><th>Valor</th></tr></thead><tbody><tr><td>URL</td><td><a href="https://raw.githubusercontent.com/henrikmm/motiva-ota-cp2/main/firmware_v2.bin">https://raw.githubusercontent.com/henrikmm/motiva-ota-cp2/main/firmware_v2.bin</a></td></tr><tr><td>Tamanho</td><td>1.025.120 bytes</td></tr><tr><td>SHA-256</td><td>f33e883e79e446a1a9c4ea5ce4f04276d3b8a45f8f524ef7df4b90182943c527</td></tr><tr><td>Particao de destino</td><td>app0/app1 (1.310.720 bytes) - esquema Default 4MB with spiffs</td></tr></tbody></table>
+<p>Para conferir apos o download: <code>shasum -a 256 firmware_v2.bin</code></p>
+
+<div class="quebra"></div>
+<h2>12. Codigo-fonte completo &mdash; Firmware 1.0</h2>
+<pre class="code"><span class="ln">  1</span> /* ============================================================================
+<span class="ln">  2</span>    S2-CP02 - Projeto Motiva | Atualizacao Remota de Firmware (OTA)
+<span class="ln">  3</span>    FIRMWARE 1.0 - No de sensoriamento de vegetacao (ESP32 / Wokwi)
+<span class="ln">  4</span> 
+<span class="ln">  5</span>    Integrantes:
+<span class="ln">  6</span>      Helena Barbosa Costa                  RM 562450
+<span class="ln">  7</span>      Henrique Mandrick                     RM 562715
+<span class="ln">  8</span>      Mateus Scandiuzzi Valente Tomomitsu   RM 561565
+<span class="ln">  9</span>      Ryan Amorim de Castro Santana         RM 564393
+<span class="ln"> 10</span>      Thomas Joh Kobayashi                  RM 562758
+<span class="ln"> 11</span> 
+<span class="ln"> 12</span>    Funcao desta versao:
+<span class="ln"> 13</span>      - 5 leituras pseudoaleatorias (10 a 20 cm) por sessao, uma a cada 2 s
+<span class="ln"> 14</span>      - media aritmetica da sessao
+<span class="ln"> 15</span>      - nova sessao a cada 48 s contados do INICIO da sessao anterior
+<span class="ln"> 16</span>      - LED AZUL indicando &quot;firmware 1.0 em execucao&quot;
+<span class="ln"> 17</span>      - apos 3 sessoes, consulta o manifesto remoto e, havendo versao mais
+<span class="ln"> 18</span>        nova, baixa o .bin e executa a atualizacao OTA
+<span class="ln"> 19</span>    ============================================================================ */
+<span class="ln"> 20</span> 
+<span class="ln"> 21</span> #include &lt;WiFi.h&gt;
+<span class="ln"> 22</span> #include &lt;WiFiClientSecure.h&gt;
+<span class="ln"> 23</span> #include &lt;HTTPClient.h&gt;
+<span class="ln"> 24</span> #include &lt;HTTPUpdate.h&gt;
+<span class="ln"> 25</span> 
+<span class="ln"> 26</span> /* ------------------------------------------------------------- IDENTIDADE */
+<span class="ln"> 27</span> static const char *FW_VERSION = &quot;1.0&quot;;
+<span class="ln"> 28</span> 
+<span class="ln"> 29</span> /* ------------------------------------------------------------------ REDE */
+<span class="ln"> 30</span> static const char    *WIFI_SSID       = &quot;Wokwi-GUEST&quot;;
+<span class="ln"> 31</span> static const char    *WIFI_PASS       = &quot;&quot;;
+<span class="ln"> 32</span> static const uint8_t  WIFI_CANAL      = 6;          /* acelera o connect no Wokwi */
+<span class="ln"> 33</span> static const uint32_t WIFI_TIMEOUT_MS = 20000UL;
+<span class="ln"> 34</span> 
+<span class="ln"> 35</span> static const char *MANIFEST_URL =
+<span class="ln"> 36</span>     &quot;https://raw.githubusercontent.com/henrikmm/motiva-ota-cp2/main/version.json&quot;;
+<span class="ln"> 37</span> 
+<span class="ln"> 38</span> /* -------------------------------------------------------------- HARDWARE */
+<span class="ln"> 39</span> /* LED RGB de catodo comum: nivel ALTO acende o canal */
+<span class="ln"> 40</span> static const uint8_t PIN_LED_R = 25;
+<span class="ln"> 41</span> static const uint8_t PIN_LED_G = 26;
+<span class="ln"> 42</span> static const uint8_t PIN_LED_B = 27;
+<span class="ln"> 43</span> 
+<span class="ln"> 44</span> /* ----------------------------------------------------------- TEMPORIZACAO */
+<span class="ln"> 45</span> static const uint8_t  LEITURAS_POR_SESSAO  = 5;
+<span class="ln"> 46</span> static const uint32_t INTERVALO_LEITURA_MS = 2000UL;   /* 2 s   (2 min reais)  */
+<span class="ln"> 47</span> static const uint32_t INTERVALO_SESSAO_MS  = 48000UL;  /* 48 s  (48 h reais)   */
+<span class="ln"> 48</span> static const uint8_t  CICLOS_ANTES_OTA     = 3;
+<span class="ln"> 49</span> 
+<span class="ln"> 50</span> /* ---------------------------------------------------------------- MEDICAO */
+<span class="ln"> 51</span> static const int ALTURA_MIN_CM = 10;
+<span class="ln"> 52</span> static const int ALTURA_MAX_CM = 20;
+<span class="ln"> 53</span> 
+<span class="ln"> 54</span> /* ------------------------------------------------------------------ ESTADO */
+<span class="ln"> 55</span> static int      leituras[LEITURAS_POR_SESSAO];
+<span class="ln"> 56</span> static uint8_t  indiceLeitura        = 0;
+<span class="ln"> 57</span> static uint32_t tInicioSessao        = 0;
+<span class="ln"> 58</span> static uint32_t tInicioSessaoAnterior= 0;
+<span class="ln"> 59</span> static uint32_t tProximaLeitura      = 0;
+<span class="ln"> 60</span> static uint32_t tProximaSessao       = 0;
+<span class="ln"> 61</span> static uint16_t sessoesConcluidas    = 0;
+<span class="ln"> 62</span> static bool     sessaoEmAndamento    = false;
+<span class="ln"> 63</span> static bool     otaJaTentada         = false;
+<span class="ln"> 64</span> 
+<span class="ln"> 65</span> /* ===========================================================================
+<span class="ln"> 66</span>    COMPARACAO DE TEMPO SEGURA CONTRA OVERFLOW DE millis()
+<span class="ln"> 67</span>    =========================================================================== */
+<span class="ln"> 68</span> static bool tempoAlcancado(uint32_t alvo) {
+<span class="ln"> 69</span>   return (int32_t)(millis() - alvo) &gt;= 0;
+<span class="ln"> 70</span> }
+<span class="ln"> 71</span> 
+<span class="ln"> 72</span> /* ===========================================================================
+<span class="ln"> 73</span>    LED
+<span class="ln"> 74</span>    =========================================================================== */
+<span class="ln"> 75</span> static void configurarLed() {
+<span class="ln"> 76</span>   pinMode(PIN_LED_R, OUTPUT);
+<span class="ln"> 77</span>   pinMode(PIN_LED_G, OUTPUT);
+<span class="ln"> 78</span>   pinMode(PIN_LED_B, OUTPUT);
+<span class="ln"> 79</span> }
+<span class="ln"> 80</span> 
+<span class="ln"> 81</span> static void definirCor(bool vermelho, bool verde, bool azul) {
+<span class="ln"> 82</span>   digitalWrite(PIN_LED_R, vermelho ? HIGH : LOW);
+<span class="ln"> 83</span>   digitalWrite(PIN_LED_G, verde    ? HIGH : LOW);
+<span class="ln"> 84</span>   digitalWrite(PIN_LED_B, azul     ? HIGH : LOW);
+<span class="ln"> 85</span> }
+<span class="ln"> 86</span> 
+<span class="ln"> 87</span> /* Azul = firmware 1.0 em execucao (secao 10 do enunciado) */
+<span class="ln"> 88</span> static void indicarFirmwareAtivo() { definirCor(false, false, true); }
+<span class="ln"> 89</span> 
+<span class="ln"> 90</span> /* Magenta = processo de atualizacao OTA em andamento */
+<span class="ln"> 91</span> static void indicarAtualizacao()   { definirCor(true, false, true); }
+<span class="ln"> 92</span> 
+<span class="ln"> 93</span> /* ===========================================================================
+<span class="ln"> 94</span>    AQUISICAO E ESTATISTICA
+<span class="ln"> 95</span>    =========================================================================== */
+<span class="ln"> 96</span> static int gerarLeitura() {
+<span class="ln"> 97</span>   return random(ALTURA_MIN_CM, ALTURA_MAX_CM + 1);  /* 10..20 cm inclusive */
+<span class="ln"> 98</span> }
+<span class="ln"> 99</span> 
+<span class="ln">100</span> static float calcularMedia(const int valores[], uint8_t n) {
+<span class="ln">101</span>   long soma = 0;
+<span class="ln">102</span>   for (uint8_t i = 0; i &lt; n; i++) soma += valores[i];
+<span class="ln">103</span>   return (float)soma / (float)n;
+<span class="ln">104</span> }
+<span class="ln">105</span> 
+<span class="ln">106</span> /* ===========================================================================
+<span class="ln">107</span>    CICLO DE MEDICAO (nao bloqueante, baseado em millis)
+<span class="ln">108</span>    =========================================================================== */
+<span class="ln">109</span> static void imprimirCabecalhoSessao() {
+<span class="ln">110</span>   float agoraS = millis() / 1000.0f;
+<span class="ln">111</span>   float delta  = (tInicioSessaoAnterior == 0)
+<span class="ln">112</span>                      ? 0.0f
+<span class="ln">113</span>                      : (tInicioSessao - tInicioSessaoAnterior) / 1000.0f;
+<span class="ln">114</span> 
+<span class="ln">115</span>   Serial.println();
+<span class="ln">116</span>   Serial.println(&quot;========================================&quot;);
+<span class="ln">117</span>   Serial.printf (&quot;MONITORAMENTO DE VEGETACAO - FW %s\n&quot;, FW_VERSION);
+<span class="ln">118</span>   Serial.println(&quot;========================================&quot;);
+<span class="ln">119</span>   Serial.printf (&quot;Sessao %u | t = %.2f s | intervalo desde a sessao anterior: %.2f s\n&quot;,
+<span class="ln">120</span>                  (unsigned)(sessoesConcluidas + 1), agoraS, delta);
+<span class="ln">121</span> }
+<span class="ln">122</span> 
+<span class="ln">123</span> static void iniciarSessao() {
+<span class="ln">124</span>   tInicioSessaoAnterior = tInicioSessao;
+<span class="ln">125</span>   tInicioSessao         = millis();
+<span class="ln">126</span>   /* a proxima sessao e ancorada no INICIO desta, nao no fim da 5a leitura */
+<span class="ln">127</span>   tProximaSessao        = tInicioSessao + INTERVALO_SESSAO_MS;
+<span class="ln">128</span>   tProximaLeitura       = tInicioSessao;
+<span class="ln">129</span>   indiceLeitura         = 0;
+<span class="ln">130</span>   sessaoEmAndamento     = true;
+<span class="ln">131</span> 
+<span class="ln">132</span>   imprimirCabecalhoSessao();
+<span class="ln">133</span> }
+<span class="ln">134</span> 
+<span class="ln">135</span> static void finalizarSessao() {
+<span class="ln">136</span>   float media = calcularMedia(leituras, LEITURAS_POR_SESSAO);
+<span class="ln">137</span>   Serial.printf(&quot;Media da sessao: %.1f cm\n&quot;, media);
+<span class="ln">138</span>   Serial.printf(&quot;Proxima sessao em %lu segundos.\n&quot;, INTERVALO_SESSAO_MS / 1000UL);
+<span class="ln">139</span> 
+<span class="ln">140</span>   sessaoEmAndamento = false;
+<span class="ln">141</span>   sessoesConcluidas++;
+<span class="ln">142</span> }
+<span class="ln">143</span> 
+<span class="ln">144</span> static void processarSessao() {
+<span class="ln">145</span>   if (!tempoAlcancado(tProximaLeitura)) return;
+<span class="ln">146</span> 
+<span class="ln">147</span>   leituras[indiceLeitura] = gerarLeitura();
+<span class="ln">148</span>   Serial.printf(&quot;Leitura %u: %d cm\n&quot;, (unsigned)(indiceLeitura + 1), leituras[indiceLeitura]);
+<span class="ln">149</span> 
+<span class="ln">150</span>   indiceLeitura++;
+<span class="ln">151</span>   tProximaLeitura += INTERVALO_LEITURA_MS;
+<span class="ln">152</span> 
+<span class="ln">153</span>   if (indiceLeitura &gt;= LEITURAS_POR_SESSAO) finalizarSessao();
+<span class="ln">154</span> }
+<span class="ln">155</span> 
+<span class="ln">156</span> /* ===========================================================================
+<span class="ln">157</span>    CONECTIVIDADE
+<span class="ln">158</span>    =========================================================================== */
+<span class="ln">159</span> static bool conectarWiFi() {
+<span class="ln">160</span>   if (WiFi.status() == WL_CONNECTED) return true;
+<span class="ln">161</span> 
+<span class="ln">162</span>   Serial.printf(&quot;[OTA] Conectando a rede \&quot;%s\&quot;...\n&quot;, WIFI_SSID);
+<span class="ln">163</span>   WiFi.mode(WIFI_STA);
+<span class="ln">164</span>   WiFi.begin(WIFI_SSID, WIFI_PASS, WIFI_CANAL);
+<span class="ln">165</span> 
+<span class="ln">166</span>   uint32_t limite = millis() + WIFI_TIMEOUT_MS;
+<span class="ln">167</span>   while (WiFi.status() != WL_CONNECTED &amp;&amp; !tempoAlcancado(limite)) {
+<span class="ln">168</span>     delay(250);
+<span class="ln">169</span>     Serial.print(&quot;.&quot;);
+<span class="ln">170</span>   }
+<span class="ln">171</span>   Serial.println();
+<span class="ln">172</span> 
+<span class="ln">173</span>   if (WiFi.status() != WL_CONNECTED) {
+<span class="ln">174</span>     /* Situacao prevista na secao 13: nao ha conexao Wi-Fi */
+<span class="ln">175</span>     Serial.println(&quot;[OTA] ERRO: nao foi possivel conectar ao Wi-Fi.&quot;);
+<span class="ln">176</span>     Serial.println(&quot;[OTA] Atualizacao cancelada. O no continua medindo com o FW 1.0.&quot;);
+<span class="ln">177</span>     return false;
+<span class="ln">178</span>   }
+<span class="ln">179</span> 
+<span class="ln">180</span>   Serial.printf(&quot;[OTA] Wi-Fi conectado. IP: %s\n&quot;, WiFi.localIP().toString().c_str());
+<span class="ln">181</span>   return true;
+<span class="ln">182</span> }
+<span class="ln">183</span> 
+<span class="ln">184</span> /* ===========================================================================
+<span class="ln">185</span>    MANIFESTO DE VERSAO
+<span class="ln">186</span>    Leitura manual do JSON: o manifesto tem formato fixo e conhecido, o que
+<span class="ln">187</span>    dispensa uma biblioteca de parsing externa e mantem o binario menor.
+<span class="ln">188</span>    =========================================================================== */
+<span class="ln">189</span> static String extrairValorJson(const String &amp;json, const String &amp;chave) {
+<span class="ln">190</span>   String alvo = &quot;\&quot;&quot; + chave + &quot;\&quot;&quot;;
+<span class="ln">191</span>   int p = json.indexOf(alvo);
+<span class="ln">192</span>   if (p &lt; 0) return &quot;&quot;;
+<span class="ln">193</span>   p = json.indexOf(&#x27;:&#x27;, p + alvo.length());
+<span class="ln">194</span>   if (p &lt; 0) return &quot;&quot;;
+<span class="ln">195</span>   int ini = json.indexOf(&#x27;&quot;&#x27;, p);
+<span class="ln">196</span>   if (ini &lt; 0) return &quot;&quot;;
+<span class="ln">197</span>   int fim = json.indexOf(&#x27;&quot;&#x27;, ini + 1);
+<span class="ln">198</span>   if (fim &lt; 0) return &quot;&quot;;
+<span class="ln">199</span>   return json.substring(ini + 1, fim);
+<span class="ln">200</span> }
+<span class="ln">201</span> 
+<span class="ln">202</span> static bool consultarManifesto(String &amp;versaoRemota, String &amp;urlFirmware) {
+<span class="ln">203</span>   WiFiClientSecure cliente;
+<span class="ln">204</span>   cliente.setInsecure();          /* Wokwi: sem validacao de cadeia de certificados */
+<span class="ln">205</span>   cliente.setTimeout(20000);
+<span class="ln">206</span> 
+<span class="ln">207</span>   HTTPClient http;
+<span class="ln">208</span>   Serial.printf(&quot;[OTA] Consultando manifesto: %s\n&quot;, MANIFEST_URL);
+<span class="ln">209</span> 
+<span class="ln">210</span>   if (!http.begin(cliente, MANIFEST_URL)) {
+<span class="ln">211</span>     Serial.println(&quot;[OTA] ERRO: URL do manifesto invalida.&quot;);
+<span class="ln">212</span>     return false;
+<span class="ln">213</span>   }
+<span class="ln">214</span>   http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+<span class="ln">215</span>   http.setTimeout(20000);
+<span class="ln">216</span> 
+<span class="ln">217</span>   int codigo = http.GET();
+<span class="ln">218</span>   if (codigo != HTTP_CODE_OK) {
+<span class="ln">219</span>     /* Situacao prevista na secao 13: o manifesto nao pode ser acessado */
+<span class="ln">220</span>     Serial.printf(&quot;[OTA] ERRO: manifesto inacessivel (HTTP %d - %s).\n&quot;,
+<span class="ln">221</span>                   codigo, http.errorToString(codigo).c_str());
+<span class="ln">222</span>     http.end();
+<span class="ln">223</span>     return false;
+<span class="ln">224</span>   }
+<span class="ln">225</span> 
+<span class="ln">226</span>   String corpo = http.getString();
+<span class="ln">227</span>   http.end();
+<span class="ln">228</span> 
+<span class="ln">229</span>   Serial.println(&quot;[OTA] Manifesto recebido:&quot;);
+<span class="ln">230</span>   Serial.println(corpo);
+<span class="ln">231</span> 
+<span class="ln">232</span>   versaoRemota = extrairValorJson(corpo, &quot;version&quot;);
+<span class="ln">233</span>   urlFirmware  = extrairValorJson(corpo, &quot;url&quot;);
+<span class="ln">234</span> 
+<span class="ln">235</span>   if (versaoRemota.length() == 0 || urlFirmware.length() == 0) {
+<span class="ln">236</span>     Serial.println(&quot;[OTA] ERRO: manifesto sem os campos \&quot;version\&quot; e \&quot;url\&quot;.&quot;);
+<span class="ln">237</span>     return false;
+<span class="ln">238</span>   }
+<span class="ln">239</span>   return true;
+<span class="ln">240</span> }
+<span class="ln">241</span> 
+<span class="ln">242</span> /* Converte &quot;2.0&quot; em 200 para permitir comparacao numerica (e nao textual) */
+<span class="ln">243</span> static int versaoParaNumero(const String &amp;versao) {
+<span class="ln">244</span>   int ponto = versao.indexOf(&#x27;.&#x27;);
+<span class="ln">245</span>   int maior = (ponto &lt; 0) ? versao.toInt()  : versao.substring(0, ponto).toInt();
+<span class="ln">246</span>   int menor = (ponto &lt; 0) ? 0               : versao.substring(ponto + 1).toInt();
+<span class="ln">247</span>   return maior * 100 + menor;
+<span class="ln">248</span> }
+<span class="ln">249</span> 
+<span class="ln">250</span> static bool versaoEhMaisNova(const String &amp;remota, const String &amp;instalada) {
+<span class="ln">251</span>   return versaoParaNumero(remota) &gt; versaoParaNumero(instalada);
+<span class="ln">252</span> }
+<span class="ln">253</span> 
+<span class="ln">254</span> /* ===========================================================================
+<span class="ln">255</span>    ATUALIZACAO OTA
+<span class="ln">256</span>    =========================================================================== */
+<span class="ln">257</span> static void aoProgredir(int recebido, int total) {
+<span class="ln">258</span>   static int ultimoPercentual = -1;
+<span class="ln">259</span>   if (total &lt;= 0) return;
+<span class="ln">260</span>   int p = (recebido * 100) / total;
+<span class="ln">261</span>   if (p != ultimoPercentual &amp;&amp; p % 10 == 0) {
+<span class="ln">262</span>     Serial.printf(&quot;[OTA] Download: %d%% (%d / %d bytes)\n&quot;, p, recebido, total);
+<span class="ln">263</span>     ultimoPercentual = p;
+<span class="ln">264</span>   }
+<span class="ln">265</span> }
+<span class="ln">266</span> 
+<span class="ln">267</span> static void executarAtualizacaoOTA(const String &amp;urlFirmware) {
+<span class="ln">268</span>   Serial.printf(&quot;[OTA] Baixando firmware: %s\n&quot;, urlFirmware.c_str());
+<span class="ln">269</span>   indicarAtualizacao();
+<span class="ln">270</span> 
+<span class="ln">271</span>   WiFiClientSecure cliente;
+<span class="ln">272</span>   cliente.setInsecure();
+<span class="ln">273</span>   cliente.setTimeout(30000);
+<span class="ln">274</span> 
+<span class="ln">275</span>   httpUpdate.rebootOnUpdate(false);   /* o reboot e feito por nos, apos o log */
+<span class="ln">276</span>   httpUpdate.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+<span class="ln">277</span>   httpUpdate.onProgress(aoProgredir);
+<span class="ln">278</span> 
+<span class="ln">279</span>   t_httpUpdate_return resultado = httpUpdate.update(cliente, urlFirmware);
+<span class="ln">280</span> 
+<span class="ln">281</span>   switch (resultado) {
+<span class="ln">282</span>     case HTTP_UPDATE_OK:
+<span class="ln">283</span>       Serial.println(&quot;[OTA] Gravacao concluida com sucesso.&quot;);
+<span class="ln">284</span>       Serial.println(&quot;[OTA] Reiniciando o ESP32 para executar o Firmware 2.0...&quot;);
+<span class="ln">285</span>       Serial.flush();
+<span class="ln">286</span>       delay(500);
+<span class="ln">287</span>       ESP.restart();
+<span class="ln">288</span>       break;
+<span class="ln">289</span> 
+<span class="ln">290</span>     case HTTP_UPDATE_NO_UPDATES:
+<span class="ln">291</span>       /* Situacao prevista na secao 13: a versao instalada ja e a mais recente */
+<span class="ln">292</span>       Serial.println(&quot;[OTA] Servidor informou que nao ha atualizacao a aplicar.&quot;);
+<span class="ln">293</span>       indicarFirmwareAtivo();
+<span class="ln">294</span>       break;
+<span class="ln">295</span> 
+<span class="ln">296</span>     case HTTP_UPDATE_FAILED:
+<span class="ln">297</span>     default:
+<span class="ln">298</span>       /* Situacoes previstas na secao 13: download falhou / gravacao com erro */
+<span class="ln">299</span>       Serial.printf(&quot;[OTA] ERRO %d durante a atualizacao: %s\n&quot;,
+<span class="ln">300</span>                     httpUpdate.getLastError(),
+<span class="ln">301</span>                     httpUpdate.getLastErrorString().c_str());
+<span class="ln">302</span>       Serial.println(&quot;[OTA] O no permanece no FW 1.0 e continua medindo normalmente.&quot;);
+<span class="ln">303</span>       indicarFirmwareAtivo();
+<span class="ln">304</span>       break;
+<span class="ln">305</span>   }
+<span class="ln">306</span> }
+<span class="ln">307</span> 
+<span class="ln">308</span> /* Orquestra todo o fluxo obrigatorio da secao 12 */
+<span class="ln">309</span> static void verificarAtualizacao() {
+<span class="ln">310</span>   otaJaTentada = true;
+<span class="ln">311</span> 
+<span class="ln">312</span>   Serial.println();
+<span class="ln">313</span>   Serial.println(&quot;----------------------------------------&quot;);
+<span class="ln">314</span>   Serial.printf (&quot;VERIFICACAO DE ATUALIZACAO (apos %u sessoes)\n&quot;, (unsigned)sessoesConcluidas);
+<span class="ln">315</span>   Serial.printf (&quot;Versao instalada: %s\n&quot;, FW_VERSION);
+<span class="ln">316</span>   Serial.println(&quot;----------------------------------------&quot;);
+<span class="ln">317</span> 
+<span class="ln">318</span>   if (!conectarWiFi()) { indicarFirmwareAtivo(); return; }
+<span class="ln">319</span> 
+<span class="ln">320</span>   String versaoRemota, urlFirmware;
+<span class="ln">321</span>   if (!consultarManifesto(versaoRemota, urlFirmware)) { indicarFirmwareAtivo(); return; }
+<span class="ln">322</span> 
+<span class="ln">323</span>   Serial.printf(&quot;[OTA] Versao instalada: %s | versao disponivel: %s\n&quot;,
+<span class="ln">324</span>                 FW_VERSION, versaoRemota.c_str());
+<span class="ln">325</span> 
+<span class="ln">326</span>   if (!versaoEhMaisNova(versaoRemota, FW_VERSION)) {
+<span class="ln">327</span>     /* Situacao prevista na secao 13: a versao instalada ja e a mais recente */
+<span class="ln">328</span>     Serial.println(&quot;[OTA] Firmware ja esta na versao mais recente. Nenhuma acao necessaria.&quot;);
+<span class="ln">329</span>     indicarFirmwareAtivo();
+<span class="ln">330</span>     return;
+<span class="ln">331</span>   }
+<span class="ln">332</span> 
+<span class="ln">333</span>   Serial.println(&quot;[OTA] Atualizacao disponivel. Iniciando download...&quot;);
+<span class="ln">334</span>   executarAtualizacaoOTA(urlFirmware);
+<span class="ln">335</span> }
+<span class="ln">336</span> 
+<span class="ln">337</span> /* ===========================================================================
+<span class="ln">338</span>    SETUP / LOOP
+<span class="ln">339</span>    =========================================================================== */
+<span class="ln">340</span> void setup() {
+<span class="ln">341</span>   Serial.begin(115200);
+<span class="ln">342</span>   delay(300);
+<span class="ln">343</span> 
+<span class="ln">344</span>   configurarLed();
+<span class="ln">345</span>   indicarFirmwareAtivo();
+<span class="ln">346</span> 
+<span class="ln">347</span>   randomSeed(esp_random());
+<span class="ln">348</span> 
+<span class="ln">349</span>   Serial.println();
+<span class="ln">350</span>   Serial.println(&quot;########################################&quot;);
+<span class="ln">351</span>   Serial.printf (&quot;  PROJETO MOTIVA - FIRMWARE %s\n&quot;, FW_VERSION);
+<span class="ln">352</span>   Serial.println(&quot;  No de monitoramento de vegetacao&quot;);
+<span class="ln">353</span>   Serial.printf (&quot;  Verificacao OTA apos %u sessoes\n&quot;, (unsigned)CICLOS_ANTES_OTA);
+<span class="ln">354</span>   Serial.println(&quot;########################################&quot;);
+<span class="ln">355</span> 
+<span class="ln">356</span>   tProximaSessao = millis();   /* primeira sessao comeca imediatamente */
+<span class="ln">357</span> }
+<span class="ln">358</span> 
+<span class="ln">359</span> void loop() {
+<span class="ln">360</span>   if (!sessaoEmAndamento &amp;&amp; tempoAlcancado(tProximaSessao)) {
+<span class="ln">361</span>     iniciarSessao();
+<span class="ln">362</span>   }
+<span class="ln">363</span> 
+<span class="ln">364</span>   if (sessaoEmAndamento) {
+<span class="ln">365</span>     processarSessao();
+<span class="ln">366</span>   }
+<span class="ln">367</span> 
+<span class="ln">368</span>   if (!sessaoEmAndamento &amp;&amp; !otaJaTentada &amp;&amp; sessoesConcluidas &gt;= CICLOS_ANTES_OTA) {
+<span class="ln">369</span>     verificarAtualizacao();
+<span class="ln">370</span>     /* a verificacao e bloqueante; se ela ultrapassou a janela de 48 s,
+<span class="ln">371</span>        reancora o agendamento para nao disparar sessoes em rajada */
+<span class="ln">372</span>     if (tempoAlcancado(tProximaSessao)) tProximaSessao = millis();
+<span class="ln">373</span>   }
+<span class="ln">374</span> }</pre>
+
+<div class="quebra"></div>
+<h2>13. Codigo-fonte completo &mdash; Firmware 2.0</h2>
+<pre class="code"><span class="ln">  1</span> /* ============================================================================
+<span class="ln">  2</span>    S2-CP02 - Projeto Motiva | Atualizacao Remota de Firmware (OTA)
+<span class="ln">  3</span>    FIRMWARE 2.0 - No de sensoriamento de vegetacao (ESP32 / Wokwi)
+<span class="ln">  4</span> 
+<span class="ln">  5</span>    Integrantes:
+<span class="ln">  6</span>      Helena Barbosa Costa                  RM 562450
+<span class="ln">  7</span>      Henrique Mandrick                     RM 562715
+<span class="ln">  8</span>      Mateus Scandiuzzi Valente Tomomitsu   RM 561565
+<span class="ln">  9</span>      Ryan Amorim de Castro Santana         RM 564393
+<span class="ln"> 10</span>      Thomas Joh Kobayashi                  RM 562758
+<span class="ln"> 11</span> 
+<span class="ln"> 12</span>    Evolucao em relacao ao Firmware 1.0 (secao 7 do enunciado):
+<span class="ln"> 13</span>      - mantem as 5 leituras / 2 s e o calculo da media
+<span class="ln"> 14</span>      - ordena uma COPIA das leituras em ordem crescente (algoritmo proprio)
+<span class="ln"> 15</span>      - exibe os valores na ordem original e na ordem crescente
+<span class="ln"> 16</span>      - calcula e exibe a MEDIANA da sessao
+<span class="ln"> 17</span>      - aplica HISTERESE sobre a mediana para alternar NORMAL / ALERTA
+<span class="ln"> 18</span>      - LED VERDE = NORMAL, LED VERMELHO = ALERTA
+<span class="ln"> 19</span>      - verifica o manifesto no boot e reporta que ja esta na versao mais recente
+<span class="ln"> 20</span> 
+<span class="ln"> 21</span>    Comandos de teste pelo Serial Monitor (digite e tecle Enter):
+<span class="ln"> 22</span>      T1 -&gt; injeta sessao com mediana &gt;= 16 cm  (espera-se ALERTA / vermelho)
+<span class="ln"> 23</span>      T2 -&gt; injeta sessao com mediana  = 15 cm  (espera-se MANTER o estado)
+<span class="ln"> 24</span>      T3 -&gt; injeta sessao com mediana &lt;= 14 cm  (espera-se NORMAL / verde)
+<span class="ln"> 25</span>    ============================================================================ */
+<span class="ln"> 26</span> 
+<span class="ln"> 27</span> #include &lt;WiFi.h&gt;
+<span class="ln"> 28</span> #include &lt;WiFiClientSecure.h&gt;
+<span class="ln"> 29</span> #include &lt;HTTPClient.h&gt;
+<span class="ln"> 30</span> 
+<span class="ln"> 31</span> /* ------------------------------------------------------------- IDENTIDADE */
+<span class="ln"> 32</span> static const char *FW_VERSION = &quot;2.0&quot;;
+<span class="ln"> 33</span> 
+<span class="ln"> 34</span> /* ------------------------------------------------------------------ REDE */
+<span class="ln"> 35</span> static const char    *WIFI_SSID       = &quot;Wokwi-GUEST&quot;;
+<span class="ln"> 36</span> static const char    *WIFI_PASS       = &quot;&quot;;
+<span class="ln"> 37</span> static const uint8_t  WIFI_CANAL      = 6;
+<span class="ln"> 38</span> static const uint32_t WIFI_TIMEOUT_MS = 20000UL;
+<span class="ln"> 39</span> 
+<span class="ln"> 40</span> static const char *MANIFEST_URL =
+<span class="ln"> 41</span>     &quot;https://raw.githubusercontent.com/henrikmm/motiva-ota-cp2/main/version.json&quot;;
+<span class="ln"> 42</span> 
+<span class="ln"> 43</span> /* -------------------------------------------------------------- HARDWARE */
+<span class="ln"> 44</span> static const uint8_t PIN_LED_R = 25;
+<span class="ln"> 45</span> static const uint8_t PIN_LED_G = 26;
+<span class="ln"> 46</span> static const uint8_t PIN_LED_B = 27;
+<span class="ln"> 47</span> 
+<span class="ln"> 48</span> /* ----------------------------------------------------------- TEMPORIZACAO */
+<span class="ln"> 49</span> static const uint8_t  LEITURAS_POR_SESSAO  = 5;
+<span class="ln"> 50</span> static const uint32_t INTERVALO_LEITURA_MS = 2000UL;
+<span class="ln"> 51</span> static const uint32_t INTERVALO_SESSAO_MS  = 48000UL;
+<span class="ln"> 52</span> 
+<span class="ln"> 53</span> /* ---------------------------------------------------------------- MEDICAO */
+<span class="ln"> 54</span> static const int ALTURA_MIN_CM = 10;
+<span class="ln"> 55</span> static const int ALTURA_MAX_CM = 20;
+<span class="ln"> 56</span> 
+<span class="ln"> 57</span> /* --------------------------------------------------------------- HISTERESE
+<span class="ln"> 58</span>    Secao 9 do enunciado:
+<span class="ln"> 59</span>      mediana &gt;= 16 cm ............ entra em ALERTA
+<span class="ln"> 60</span>      14 cm &lt; mediana &lt; 16 cm ..... mantem o estado anterior
+<span class="ln"> 61</span>      mediana &lt;= 14 cm ............ entra/retorna para NORMAL
+<span class="ln"> 62</span>    Como as leituras sao numeros inteiros, a mediana de 5 valores tambem e
+<span class="ln"> 63</span>    sempre inteira: a faixa de manutencao contem unicamente a mediana 15 cm. */
+<span class="ln"> 64</span> static const int LIMITE_ALERTA = 16;
+<span class="ln"> 65</span> static const int LIMITE_NORMAL = 14;
+<span class="ln"> 66</span> 
+<span class="ln"> 67</span> enum EstadoSistema { ESTADO_NORMAL, ESTADO_ALERTA };
+<span class="ln"> 68</span> 
+<span class="ln"> 69</span> /* ------------------------------------------------------------------ ESTADO */
+<span class="ln"> 70</span> static int           leituras[LEITURAS_POR_SESSAO];
+<span class="ln"> 71</span> static uint8_t       indiceLeitura         = 0;
+<span class="ln"> 72</span> static uint32_t      tInicioSessao         = 0;
+<span class="ln"> 73</span> static uint32_t      tInicioSessaoAnterior = 0;
+<span class="ln"> 74</span> static uint32_t      tProximaLeitura       = 0;
+<span class="ln"> 75</span> static uint32_t      tProximaSessao        = 0;
+<span class="ln"> 76</span> static uint16_t      sessoesConcluidas     = 0;
+<span class="ln"> 77</span> static bool          sessaoEmAndamento     = false;
+<span class="ln"> 78</span> static EstadoSistema estadoAtual           = ESTADO_NORMAL;
+<span class="ln"> 79</span> 
+<span class="ln"> 80</span> /* ===========================================================================
+<span class="ln"> 81</span>    COMPARACAO DE TEMPO SEGURA CONTRA OVERFLOW DE millis()
+<span class="ln"> 82</span>    =========================================================================== */
+<span class="ln"> 83</span> static bool tempoAlcancado(uint32_t alvo) {
+<span class="ln"> 84</span>   return (int32_t)(millis() - alvo) &gt;= 0;
+<span class="ln"> 85</span> }
+<span class="ln"> 86</span> 
+<span class="ln"> 87</span> /* ===========================================================================
+<span class="ln"> 88</span>    LED
+<span class="ln"> 89</span>    =========================================================================== */
+<span class="ln"> 90</span> static void configurarLed() {
+<span class="ln"> 91</span>   pinMode(PIN_LED_R, OUTPUT);
+<span class="ln"> 92</span>   pinMode(PIN_LED_G, OUTPUT);
+<span class="ln"> 93</span>   pinMode(PIN_LED_B, OUTPUT);
+<span class="ln"> 94</span> }
+<span class="ln"> 95</span> 
+<span class="ln"> 96</span> static void definirCor(bool vermelho, bool verde, bool azul) {
+<span class="ln"> 97</span>   digitalWrite(PIN_LED_R, vermelho ? HIGH : LOW);
+<span class="ln"> 98</span>   digitalWrite(PIN_LED_G, verde    ? HIGH : LOW);
+<span class="ln"> 99</span>   digitalWrite(PIN_LED_B, azul     ? HIGH : LOW);
+<span class="ln">100</span> }
+<span class="ln">101</span> 
+<span class="ln">102</span> /* Secao 10: no FW 2.0 o LED passa a indicar o ESTADO do sistema */
+<span class="ln">103</span> static void atualizarLedPorEstado() {
+<span class="ln">104</span>   if (estadoAtual == ESTADO_ALERTA) definirCor(true,  false, false);  /* vermelho */
+<span class="ln">105</span>   else                              definirCor(false, true,  false);  /* verde    */
+<span class="ln">106</span> }
+<span class="ln">107</span> 
+<span class="ln">108</span> static const char *nomeEstado(EstadoSistema e) {
+<span class="ln">109</span>   return (e == ESTADO_ALERTA) ? &quot;ALERTA&quot; : &quot;NORMAL&quot;;
+<span class="ln">110</span> }
+<span class="ln">111</span> 
+<span class="ln">112</span> static const char *nomeCorDoEstado(EstadoSistema e) {
+<span class="ln">113</span>   return (e == ESTADO_ALERTA) ? &quot;VERMELHO&quot; : &quot;VERDE&quot;;
+<span class="ln">114</span> }
+<span class="ln">115</span> 
+<span class="ln">116</span> /* ===========================================================================
+<span class="ln">117</span>    AQUISICAO E ESTATISTICA
+<span class="ln">118</span>    =========================================================================== */
+<span class="ln">119</span> static int gerarLeitura() {
+<span class="ln">120</span>   return random(ALTURA_MIN_CM, ALTURA_MAX_CM + 1);
+<span class="ln">121</span> }
+<span class="ln">122</span> 
+<span class="ln">123</span> static float calcularMedia(const int valores[], uint8_t n) {
+<span class="ln">124</span>   long soma = 0;
+<span class="ln">125</span>   for (uint8_t i = 0; i &lt; n; i++) soma += valores[i];
+<span class="ln">126</span>   return (float)soma / (float)n;
+<span class="ln">127</span> }
+<span class="ln">128</span> 
+<span class="ln">129</span> /* Ordenacao por insercao, implementada no proprio programa (secao 8).
+<span class="ln">130</span>    Trabalha sobre uma COPIA para preservar a ordem original das leituras. */
+<span class="ln">131</span> static void ordenarCrescente(int destino[], const int origem[], uint8_t n) {
+<span class="ln">132</span>   for (uint8_t i = 0; i &lt; n; i++) destino[i] = origem[i];
+<span class="ln">133</span> 
+<span class="ln">134</span>   for (uint8_t i = 1; i &lt; n; i++) {
+<span class="ln">135</span>     int chave = destino[i];
+<span class="ln">136</span>     int j = (int)i - 1;
+<span class="ln">137</span>     while (j &gt;= 0 &amp;&amp; destino[j] &gt; chave) {
+<span class="ln">138</span>       destino[j + 1] = destino[j];
+<span class="ln">139</span>       j--;
+<span class="ln">140</span>     }
+<span class="ln">141</span>     destino[j + 1] = chave;
+<span class="ln">142</span>   }
+<span class="ln">143</span> }
+<span class="ln">144</span> 
+<span class="ln">145</span> /* Para 5 valores, a mediana e o elemento central do vetor ordenado */
+<span class="ln">146</span> static int calcularMediana(const int ordenado[], uint8_t n) {
+<span class="ln">147</span>   return ordenado[n / 2];
+<span class="ln">148</span> }
+<span class="ln">149</span> 
+<span class="ln">150</span> static void imprimirVetor(const char *rotulo, const int valores[], uint8_t n) {
+<span class="ln">151</span>   Serial.print(rotulo);
+<span class="ln">152</span>   for (uint8_t i = 0; i &lt; n; i++) {
+<span class="ln">153</span>     Serial.printf(&quot;%d&quot;, valores[i]);
+<span class="ln">154</span>     if (i &lt; n - 1) Serial.print(&quot;  &quot;);
+<span class="ln">155</span>   }
+<span class="ln">156</span>   Serial.println(&quot; cm&quot;);
+<span class="ln">157</span> }
+<span class="ln">158</span> 
+<span class="ln">159</span> /* ===========================================================================
+<span class="ln">160</span>    HISTERESE
+<span class="ln">161</span>    =========================================================================== */
+<span class="ln">162</span> static EstadoSistema aplicarHisterese(int mediana, const char **motivo) {
+<span class="ln">163</span>   if (mediana &gt;= LIMITE_ALERTA) {
+<span class="ln">164</span>     *motivo = &quot;mediana &gt;= 16 cm -&gt; entra em ALERTA&quot;;
+<span class="ln">165</span>     estadoAtual = ESTADO_ALERTA;
+<span class="ln">166</span>   } else if (mediana &lt;= LIMITE_NORMAL) {
+<span class="ln">167</span>     *motivo = &quot;mediana &lt;= 14 cm -&gt; entra/retorna para NORMAL&quot;;
+<span class="ln">168</span>     estadoAtual = ESTADO_NORMAL;
+<span class="ln">169</span>   } else {
+<span class="ln">170</span>     *motivo = &quot;14 cm &lt; mediana &lt; 16 cm -&gt; faixa de histerese, estado mantido&quot;;
+<span class="ln">171</span>     /* estadoAtual permanece inalterado */
+<span class="ln">172</span>   }
+<span class="ln">173</span>   return estadoAtual;
+<span class="ln">174</span> }
+<span class="ln">175</span> 
+<span class="ln">176</span> /* ===========================================================================
+<span class="ln">177</span>    PROCESSAMENTO DE UMA SESSAO COMPLETA
+<span class="ln">178</span>    =========================================================================== */
+<span class="ln">179</span> static void processarResultadosDaSessao(const int valores[], uint8_t n) {
+<span class="ln">180</span>   int ordenado[LEITURAS_POR_SESSAO];
+<span class="ln">181</span>   ordenarCrescente(ordenado, valores, n);
+<span class="ln">182</span> 
+<span class="ln">183</span>   float media   = calcularMedia(valores, n);
+<span class="ln">184</span>   int   mediana = calcularMediana(ordenado, n);
+<span class="ln">185</span> 
+<span class="ln">186</span>   EstadoSistema estadoAnterior = estadoAtual;
+<span class="ln">187</span>   const char   *motivo         = &quot;&quot;;
+<span class="ln">188</span>   EstadoSistema estadoNovo     = aplicarHisterese(mediana, &amp;motivo);
+<span class="ln">189</span>   atualizarLedPorEstado();
+<span class="ln">190</span> 
+<span class="ln">191</span>   imprimirVetor(&quot;Valores na ordem original : &quot;, valores,  n);
+<span class="ln">192</span>   imprimirVetor(&quot;Valores em ordem crescente: &quot;, ordenado, n);
+<span class="ln">193</span>   Serial.printf(&quot;Media da sessao: %.1f cm\n&quot;, media);
+<span class="ln">194</span>   Serial.printf(&quot;Mediana da sessao: %d cm\n&quot;, mediana);
+<span class="ln">195</span>   Serial.printf(&quot;Histerese: %s\n&quot;, motivo);
+<span class="ln">196</span>   Serial.printf(&quot;Estado anterior: %s | Estado atual: %s\n&quot;,
+<span class="ln">197</span>                 nomeEstado(estadoAnterior), nomeEstado(estadoNovo));
+<span class="ln">198</span>   Serial.printf(&quot;LED: %s\n&quot;, nomeCorDoEstado(estadoNovo));
+<span class="ln">199</span> }
+<span class="ln">200</span> 
+<span class="ln">201</span> /* ===========================================================================
+<span class="ln">202</span>    CICLO DE MEDICAO (nao bloqueante, baseado em millis)
+<span class="ln">203</span>    =========================================================================== */
+<span class="ln">204</span> static void imprimirCabecalhoSessao() {
+<span class="ln">205</span>   float agoraS = millis() / 1000.0f;
+<span class="ln">206</span>   float delta  = (tInicioSessaoAnterior == 0)
+<span class="ln">207</span>                      ? 0.0f
+<span class="ln">208</span>                      : (tInicioSessao - tInicioSessaoAnterior) / 1000.0f;
+<span class="ln">209</span> 
+<span class="ln">210</span>   Serial.println();
+<span class="ln">211</span>   Serial.println(&quot;========================================&quot;);
+<span class="ln">212</span>   Serial.printf (&quot;MONITORAMENTO DE VEGETACAO - FW %s\n&quot;, FW_VERSION);
+<span class="ln">213</span>   Serial.println(&quot;========================================&quot;);
+<span class="ln">214</span>   Serial.printf (&quot;Sessao %u | t = %.2f s | intervalo desde a sessao anterior: %.2f s\n&quot;,
+<span class="ln">215</span>                  (unsigned)(sessoesConcluidas + 1), agoraS, delta);
+<span class="ln">216</span> }
+<span class="ln">217</span> 
+<span class="ln">218</span> static void iniciarSessao() {
+<span class="ln">219</span>   tInicioSessaoAnterior = tInicioSessao;
+<span class="ln">220</span>   tInicioSessao         = millis();
+<span class="ln">221</span>   tProximaSessao        = tInicioSessao + INTERVALO_SESSAO_MS;  /* ancorado no INICIO */
+<span class="ln">222</span>   tProximaLeitura       = tInicioSessao;
+<span class="ln">223</span>   indiceLeitura         = 0;
+<span class="ln">224</span>   sessaoEmAndamento     = true;
+<span class="ln">225</span> 
+<span class="ln">226</span>   imprimirCabecalhoSessao();
+<span class="ln">227</span> }
+<span class="ln">228</span> 
+<span class="ln">229</span> static void finalizarSessao() {
+<span class="ln">230</span>   processarResultadosDaSessao(leituras, LEITURAS_POR_SESSAO);
+<span class="ln">231</span>   Serial.printf(&quot;Proxima sessao em %lu segundos.\n&quot;, INTERVALO_SESSAO_MS / 1000UL);
+<span class="ln">232</span> 
+<span class="ln">233</span>   sessaoEmAndamento = false;
+<span class="ln">234</span>   sessoesConcluidas++;
+<span class="ln">235</span> }
+<span class="ln">236</span> 
+<span class="ln">237</span> static void processarSessao() {
+<span class="ln">238</span>   if (!tempoAlcancado(tProximaLeitura)) return;
+<span class="ln">239</span> 
+<span class="ln">240</span>   leituras[indiceLeitura] = gerarLeitura();
+<span class="ln">241</span>   Serial.printf(&quot;Leitura %u: %d cm\n&quot;, (unsigned)(indiceLeitura + 1), leituras[indiceLeitura]);
+<span class="ln">242</span> 
+<span class="ln">243</span>   indiceLeitura++;
+<span class="ln">244</span>   tProximaLeitura += INTERVALO_LEITURA_MS;
+<span class="ln">245</span> 
+<span class="ln">246</span>   if (indiceLeitura &gt;= LEITURAS_POR_SESSAO) finalizarSessao();
+<span class="ln">247</span> }
+<span class="ln">248</span> 
+<span class="ln">249</span> /* ===========================================================================
+<span class="ln">250</span>    COMANDOS DE TESTE PELO SERIAL (testes 6, 7 e 8 de forma deterministica)
+<span class="ln">251</span>    =========================================================================== */
+<span class="ln">252</span> static void executarSessaoDeTeste(const int valores[], const char *rotulo) {
+<span class="ln">253</span>   Serial.println();
+<span class="ln">254</span>   Serial.println(&quot;----------------------------------------&quot;);
+<span class="ln">255</span>   Serial.printf (&quot;SESSAO DE TESTE INJETADA - %s\n&quot;, rotulo);
+<span class="ln">256</span>   Serial.println(&quot;----------------------------------------&quot;);
+<span class="ln">257</span>   for (uint8_t i = 0; i &lt; LEITURAS_POR_SESSAO; i++) {
+<span class="ln">258</span>     Serial.printf(&quot;Leitura %u: %d cm\n&quot;, (unsigned)(i + 1), valores[i]);
+<span class="ln">259</span>   }
+<span class="ln">260</span>   processarResultadosDaSessao(valores, LEITURAS_POR_SESSAO);
+<span class="ln">261</span> }
+<span class="ln">262</span> 
+<span class="ln">263</span> static void processarComandosSeriais() {
+<span class="ln">264</span>   if (!Serial.available()) return;
+<span class="ln">265</span> 
+<span class="ln">266</span>   String cmd = Serial.readStringUntil(&#x27;\n&#x27;);
+<span class="ln">267</span>   cmd.trim();
+<span class="ln">268</span>   cmd.toUpperCase();
+<span class="ln">269</span>   if (cmd.length() == 0) return;
+<span class="ln">270</span> 
+<span class="ln">271</span>   if (cmd == &quot;T1&quot;) {
+<span class="ln">272</span>     const int v[LEITURAS_POR_SESSAO] = {18, 16, 17, 20, 16};   /* mediana 17 */
+<span class="ln">273</span>     executarSessaoDeTeste(v, &quot;T1: mediana &gt;= 16 cm&quot;);
+<span class="ln">274</span>   } else if (cmd == &quot;T2&quot;) {
+<span class="ln">275</span>     const int v[LEITURAS_POR_SESSAO] = {13, 15, 20, 15, 12};   /* mediana 15 */
+<span class="ln">276</span>     executarSessaoDeTeste(v, &quot;T2: 14 cm &lt; mediana &lt; 16 cm&quot;);
+<span class="ln">277</span>   } else if (cmd == &quot;T3&quot;) {
+<span class="ln">278</span>     const int v[LEITURAS_POR_SESSAO] = {10, 14, 13, 12, 14};   /* mediana 13 */
+<span class="ln">279</span>     executarSessaoDeTeste(v, &quot;T3: mediana &lt;= 14 cm&quot;);
+<span class="ln">280</span>   } else {
+<span class="ln">281</span>     Serial.printf(&quot;Comando desconhecido: \&quot;%s\&quot;. Use T1, T2 ou T3.\n&quot;, cmd.c_str());
+<span class="ln">282</span>   }
+<span class="ln">283</span> }
+<span class="ln">284</span> 
+<span class="ln">285</span> /* ===========================================================================
+<span class="ln">286</span>    VERIFICACAO DE VERSAO NO BOOT
+<span class="ln">287</span>    Comprova a situacao &quot;a versao instalada ja e a mais recente&quot; (secao 13).
+<span class="ln">288</span>    =========================================================================== */
+<span class="ln">289</span> static String extrairValorJson(const String &amp;json, const String &amp;chave) {
+<span class="ln">290</span>   String alvo = &quot;\&quot;&quot; + chave + &quot;\&quot;&quot;;
+<span class="ln">291</span>   int p = json.indexOf(alvo);
+<span class="ln">292</span>   if (p &lt; 0) return &quot;&quot;;
+<span class="ln">293</span>   p = json.indexOf(&#x27;:&#x27;, p + alvo.length());
+<span class="ln">294</span>   if (p &lt; 0) return &quot;&quot;;
+<span class="ln">295</span>   int ini = json.indexOf(&#x27;&quot;&#x27;, p);
+<span class="ln">296</span>   if (ini &lt; 0) return &quot;&quot;;
+<span class="ln">297</span>   int fim = json.indexOf(&#x27;&quot;&#x27;, ini + 1);
+<span class="ln">298</span>   if (fim &lt; 0) return &quot;&quot;;
+<span class="ln">299</span>   return json.substring(ini + 1, fim);
+<span class="ln">300</span> }
+<span class="ln">301</span> 
+<span class="ln">302</span> static int versaoParaNumero(const String &amp;versao) {
+<span class="ln">303</span>   int ponto = versao.indexOf(&#x27;.&#x27;);
+<span class="ln">304</span>   int maior = (ponto &lt; 0) ? versao.toInt() : versao.substring(0, ponto).toInt();
+<span class="ln">305</span>   int menor = (ponto &lt; 0) ? 0              : versao.substring(ponto + 1).toInt();
+<span class="ln">306</span>   return maior * 100 + menor;
+<span class="ln">307</span> }
+<span class="ln">308</span> 
+<span class="ln">309</span> static bool conectarWiFi() {
+<span class="ln">310</span>   if (WiFi.status() == WL_CONNECTED) return true;
+<span class="ln">311</span> 
+<span class="ln">312</span>   Serial.printf(&quot;[OTA] Conectando a rede \&quot;%s\&quot;...\n&quot;, WIFI_SSID);
+<span class="ln">313</span>   WiFi.mode(WIFI_STA);
+<span class="ln">314</span>   WiFi.begin(WIFI_SSID, WIFI_PASS, WIFI_CANAL);
+<span class="ln">315</span> 
+<span class="ln">316</span>   uint32_t limite = millis() + WIFI_TIMEOUT_MS;
+<span class="ln">317</span>   while (WiFi.status() != WL_CONNECTED &amp;&amp; !tempoAlcancado(limite)) {
+<span class="ln">318</span>     delay(250);
+<span class="ln">319</span>     Serial.print(&quot;.&quot;);
+<span class="ln">320</span>   }
+<span class="ln">321</span>   Serial.println();
+<span class="ln">322</span> 
+<span class="ln">323</span>   if (WiFi.status() != WL_CONNECTED) {
+<span class="ln">324</span>     Serial.println(&quot;[OTA] ERRO: nao foi possivel conectar ao Wi-Fi.&quot;);
+<span class="ln">325</span>     Serial.println(&quot;[OTA] O no segue medindo normalmente com o FW 2.0.&quot;);
+<span class="ln">326</span>     return false;
+<span class="ln">327</span>   }
+<span class="ln">328</span> 
+<span class="ln">329</span>   Serial.printf(&quot;[OTA] Wi-Fi conectado. IP: %s\n&quot;, WiFi.localIP().toString().c_str());
+<span class="ln">330</span>   return true;
+<span class="ln">331</span> }
+<span class="ln">332</span> 
+<span class="ln">333</span> static void verificarVersaoInstalada() {
+<span class="ln">334</span>   Serial.println();
+<span class="ln">335</span>   Serial.println(&quot;----------------------------------------&quot;);
+<span class="ln">336</span>   Serial.println(&quot;VERIFICACAO DE VERSAO APOS O BOOT&quot;);
+<span class="ln">337</span>   Serial.printf (&quot;Versao instalada: %s\n&quot;, FW_VERSION);
+<span class="ln">338</span>   Serial.println(&quot;----------------------------------------&quot;);
+<span class="ln">339</span> 
+<span class="ln">340</span>   if (!conectarWiFi()) return;
+<span class="ln">341</span> 
+<span class="ln">342</span>   WiFiClientSecure cliente;
+<span class="ln">343</span>   cliente.setInsecure();
+<span class="ln">344</span>   cliente.setTimeout(20000);
+<span class="ln">345</span> 
+<span class="ln">346</span>   HTTPClient http;
+<span class="ln">347</span>   if (!http.begin(cliente, MANIFEST_URL)) {
+<span class="ln">348</span>     Serial.println(&quot;[OTA] ERRO: URL do manifesto invalida.&quot;);
+<span class="ln">349</span>     return;
+<span class="ln">350</span>   }
+<span class="ln">351</span>   http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+<span class="ln">352</span>   http.setTimeout(20000);
+<span class="ln">353</span> 
+<span class="ln">354</span>   int codigo = http.GET();
+<span class="ln">355</span>   if (codigo != HTTP_CODE_OK) {
+<span class="ln">356</span>     Serial.printf(&quot;[OTA] ERRO: manifesto inacessivel (HTTP %d - %s).\n&quot;,
+<span class="ln">357</span>                   codigo, http.errorToString(codigo).c_str());
+<span class="ln">358</span>     http.end();
+<span class="ln">359</span>     return;
+<span class="ln">360</span>   }
+<span class="ln">361</span> 
+<span class="ln">362</span>   String corpo = http.getString();
+<span class="ln">363</span>   http.end();
+<span class="ln">364</span> 
+<span class="ln">365</span>   String versaoRemota = extrairValorJson(corpo, &quot;version&quot;);
+<span class="ln">366</span>   Serial.printf(&quot;[OTA] Versao instalada: %s | versao disponivel: %s\n&quot;,
+<span class="ln">367</span>                 FW_VERSION, versaoRemota.c_str());
+<span class="ln">368</span> 
+<span class="ln">369</span>   if (versaoParaNumero(versaoRemota) &gt; versaoParaNumero(FW_VERSION)) {
+<span class="ln">370</span>     Serial.println(&quot;[OTA] Existe uma versao mais nova publicada no repositorio.&quot;);
+<span class="ln">371</span>   } else {
+<span class="ln">372</span>     Serial.println(&quot;[OTA] Firmware ja esta na versao mais recente. Nenhuma acao necessaria.&quot;);
+<span class="ln">373</span>   }
+<span class="ln">374</span> }
+<span class="ln">375</span> 
+<span class="ln">376</span> /* ===========================================================================
+<span class="ln">377</span>    SETUP / LOOP
+<span class="ln">378</span>    =========================================================================== */
+<span class="ln">379</span> void setup() {
+<span class="ln">380</span>   Serial.begin(115200);
+<span class="ln">381</span>   Serial.setTimeout(50);
+<span class="ln">382</span>   delay(300);
+<span class="ln">383</span> 
+<span class="ln">384</span>   configurarLed();
+<span class="ln">385</span>   estadoAtual = ESTADO_NORMAL;
+<span class="ln">386</span>   atualizarLedPorEstado();
+<span class="ln">387</span> 
+<span class="ln">388</span>   randomSeed(esp_random());
+<span class="ln">389</span> 
+<span class="ln">390</span>   Serial.println();
+<span class="ln">391</span>   Serial.println(&quot;########################################&quot;);
+<span class="ln">392</span>   Serial.printf (&quot;  PROJETO MOTIVA - FIRMWARE %s\n&quot;, FW_VERSION);
+<span class="ln">393</span>   Serial.println(&quot;  Atualizacao OTA concluida com sucesso&quot;);
+<span class="ln">394</span>   Serial.println(&quot;  Novos recursos: ordenacao, mediana e histerese&quot;);
+<span class="ln">395</span>   Serial.println(&quot;  Comandos de teste: T1 / T2 / T3&quot;);
+<span class="ln">396</span>   Serial.println(&quot;########################################&quot;);
+<span class="ln">397</span> 
+<span class="ln">398</span>   verificarVersaoInstalada();
+<span class="ln">399</span> 
+<span class="ln">400</span>   tProximaSessao = millis();
+<span class="ln">401</span> }
+<span class="ln">402</span> 
+<span class="ln">403</span> void loop() {
+<span class="ln">404</span>   processarComandosSeriais();
+<span class="ln">405</span> 
+<span class="ln">406</span>   if (!sessaoEmAndamento &amp;&amp; tempoAlcancado(tProximaSessao)) {
+<span class="ln">407</span>     iniciarSessao();
+<span class="ln">408</span>   }
+<span class="ln">409</span> 
+<span class="ln">410</span>   if (sessaoEmAndamento) {
+<span class="ln">411</span>     processarSessao();
+<span class="ln">412</span>   }
+<span class="ln">413</span> }</pre>
+
+<div class="quebra"></div>
+<h2>14. Instrucoes de execucao</h2>
+<h3>No Wokwi (demonstracao)</h3>
+<ol>
+<li>Abrir o projeto Wokwi: <a href="https://wokwi.com/projects/475816561802161153">https://wokwi.com/projects/475816561802161153</a></li>
+<li>Clicar em <strong>Play</strong>. O LED acende <strong>azul</strong> e o Serial Monitor mostra o FW 1.0.</li>
+<li>Aguardar <strong>3 sessoes completas</strong> (~104 s). O no conecta ao Wi-Fi, consulta o
+manifesto, detecta a versao 2.0 e inicia o download (LED <strong>magenta</strong>).</li>
+<li>Apos a gravacao o ESP32 reinicia sozinho no <strong>Firmware 2.0</strong>, e o LED passa a
+indicar o estado (<strong>verde</strong> NORMAL / <strong>vermelho</strong> ALERTA).</li>
+<li>Para testar a histerese de forma deterministica, digitar no Serial Monitor:
+<code>T1</code> (mediana &ge; 16), <code>T2</code> (mediana = 15), <code>T3</code> (mediana &le; 14).</li>
+</ol>
+<h3>Compilando localmente</h3>
+<pre class="code">brew install arduino-cli
+arduino-cli config init
+arduino-cli config add board_manager.additional_urls \
+  https://espressif.github.io/arduino-esp32/package_esp32_index.json
+arduino-cli core update-index
+arduino-cli core install esp32:esp32
+./build.sh</pre>
+<p>O <code>build.sh</code> compila as duas versoes, gera o <code>firmware_v2.bin</code>, imprime
+tamanho e SHA-256 e aborta se o binario nao couber na particao de aplicacao.</p>
+
+<h3>Comandos de teste do Firmware 2.0</h3>
+<table><thead><tr><th>Comando</th><th>Leituras injetadas</th><th>Mediana</th><th>Resultado esperado</th></tr></thead><tbody><tr><td>T1</td><td>18 16 17 20 16</td><td>17 cm</td><td>-&gt; ALERTA (vermelho)</td></tr><tr><td>T2</td><td>13 15 20 15 12</td><td>15 cm</td><td>mantem o estado anterior</td></tr><tr><td>T3</td><td>10 14 13 12 14</td><td>13 cm</td><td>-&gt; NORMAL (verde)</td></tr></tbody></table>
+<p>A sequencia <code>T1 &rarr; T2 &rarr; T3 &rarr; T2</code> demonstra a histerese <strong>nos dois
+sentidos</strong>: o <code>T2</code> mantem ALERTA quando vem depois do <code>T1</code>, e mantem
+NORMAL quando vem depois do <code>T3</code>. E o mesmo valor de mediana produzindo estados
+diferentes &mdash; que e exatamente o que histerese significa.</p>
+
+</body></html>

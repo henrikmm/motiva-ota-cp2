@@ -1,0 +1,133 @@
+ets Jul 29 2019 12:21:46
+
+rst:0x1 (POWERON_RESET),boot:0x13 (SPI_FAST_FLASH_BOOT)
+configsip: 0, SPIWP:0xee
+clk_drv:0x00,q_drv:0x00,d_drv:0x00,cs0_drv:0x00,hd_drv:0x00,wp_drv:0x00
+mode:DIO, clock div:1
+load:0x3fff0030,len:4876
+ho 0 tail 12 room 4
+load:0x40078000,len:16532
+load:0x40080400,len:3500
+entry 0x400805b4
+
+########################################
+  PROJETO MOTIVA - FIRMWARE 1.0
+  No de monitoramento de vegetacao
+  Verificacao OTA apos 3 sessoes
+########################################
+
+========================================
+MONITORAMENTO DE VEGETACAO - FW 1.0
+========================================
+Sessao 1 | t = 1.75 s | intervalo desde a sessao anterior: 0.00 s
+Leitura 1: 17 cm
+Leitura 2: 14 cm
+Leitura 3: 16 cm
+Leitura 4: 17 cm
+Leitura 5: 11 cm
+Media da sessao: 15.0 cm
+Proxima sessao em 48 segundos.
+
+========================================
+MONITORAMENTO DE VEGETACAO - FW 1.0
+========================================
+Sessao 2 | t = 49.75 s | intervalo desde a sessao anterior: 48.00 s
+Leitura 1: 16 cm
+Leitura 2: 18 cm
+Leitura 3: 12 cm
+Leitura 4: 16 cm
+Leitura 5: 15 cm
+Media da sessao: 15.4 cm
+Proxima sessao em 48 segundos.
+
+========================================
+MONITORAMENTO DE VEGETACAO - FW 1.0
+========================================
+Sessao 3 | t = 97.75 s | intervalo desde a sessao anterior: 48.00 s
+Leitura 1: 10 cm
+Leitura 2: 16 cm
+Leitura 3: 17 cm
+Leitura 4: 18 cm
+Leitura 5: 20 cm
+Media da sessao: 16.2 cm
+Proxima sessao em 48 segundos.
+
+----------------------------------------
+VERIFICACAO DE ATUALIZACAO (apos 3 sessoes)
+Versao instalada: 1.0
+----------------------------------------
+[OTA] Conectando a rede "Wokwi-GUEST"...
+.....
+[OTA] Wi-Fi conectado. IP: 10.13.37.2
+[OTA] Consultando manifesto: https://raw.githubusercontent.com/henrikmm/motiva-ota-cp2/main/version.json
+[OTA] Manifesto recebido:
+{
+  "version": "2.0",
+  "url": "https://raw.githubusercontent.com/henrikmm/motiva-ota-cp2/main/firmware_v2.bin",
+  "notes": "Ordenacao crescente das leituras, calculo da mediana e histerese NORMAL/ALERTA com indicacao por LED RGB.",
+  "size": 1025120,
+  "sha256": "f33e883e79e446a1a9c4ea5ce4f04276d3b8a45f8f524ef7df4b90182943c527"
+}
+
+[OTA] Versao instalada: 1.0 | versao disponivel: 2.0
+[OTA] Atualizacao disponivel. Iniciando download...
+[OTA] Baixando firmware: https://raw.githubusercontent.com/henrikmm/motiva-ota-cp2/main/firmware_v2.bin
+[OTA] Download: 0% (0 / 1025120 bytes)
+[OTA] Download: 10% (106496 / 1025120 bytes)
+[OTA] Download: 20% (208896 / 1025120 bytes)
+[OTA] Download: 30% (311296 / 1025120 bytes)
+[OTA] Download: 40% (413696 / 1025120 bytes)
+[OTA] Download: 50% (516096 / 1025120 bytes)
+[OTA] Download: 60% (618496 / 1025120 bytes)
+[OTA] Download: 70% (720896 / 1025120 bytes)
+[OTA] Download: 80% (823296 / 1025120 bytes)
+[OTA] Download: 90% (925696 / 1025120 bytes)
+[OTA] Download: 100% (1025120 / 1025120 bytes)
+[OTA] Gravacao concluida com sucesso.
+[OTA] Reiniciando o ESP32 para executar o Firmware 2.0...
+ets Jul 29 2019 12:21:46
+
+rst:0xc (SW_CPU_RESET),boot:0x13 (SPI_FAST_FLASH_BOOT)
+configsip: 0, SPIWP:0xee
+clk_drv:0x00,q_drv:0x00,d_drv:0x00,cs0_drv:0x00,hd_drv:0x00,wp_drv:0x00
+mode:DIO, clock div:1
+load:0x3fff0030,len:4876
+ho 0 tail 12 room 4
+load:0x40078000,len:16532
+load:0x40080400,len:3500
+entry 0x400805b4
+
+########################################
+  PROJETO MOTIVA - FIRMWARE 2.0
+  Atualizacao OTA concluida com sucesso
+  Novos recursos: ordenacao, mediana e histerese
+  Comandos de teste: T1 / T2 / T3
+########################################
+
+----------------------------------------
+VERIFICACAO DE VERSAO APOS O BOOT
+Versao instalada: 2.0
+----------------------------------------
+[OTA] Conectando a rede "Wokwi-GUEST"...
+.....
+[OTA] Wi-Fi conectado. IP: 10.13.37.2
+[OTA] Versao instalada: 2.0 | versao disponivel: 2.0
+[OTA] Firmware ja esta na versao mais recente. Nenhuma acao necessaria.
+
+========================================
+MONITORAMENTO DE VEGETACAO - FW 2.0
+========================================
+Sessao 1 | t = 158.08 s | intervalo desde a sessao anterior: 0.00 s
+Leitura 1: 10 cm
+Leitura 2: 16 cm
+Leitura 3: 13 cm
+Leitura 4: 19 cm
+Leitura 5: 15 cm
+Valores na ordem original : 10  16  13  19  15 cm
+Valores em ordem crescente: 10  13  15  16  19 cm
+Media da sessao: 14.6 cm
+Mediana da sessao: 15 cm
+Histerese: 14 cm < mediana < 16 cm -> faixa de histerese, estado mantido
+Estado anterior: NORMAL | Estado atual: NORMAL
+LED: VERDE
+Proxima sessao em 48 segundos.

@@ -2,3 +2,6 @@
 build/
 *.elf
 *.map
+wokwi_sim/
+venv/
+*.pyc

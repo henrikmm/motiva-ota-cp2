@@ -22,7 +22,7 @@ remota de firmware a partir de um repositório público.
 
 | Item | Link |
 |------|------|
-| Projeto Wokwi (público) | _preenchido na entrega_ |
+| Projeto Wokwi (público) | https://wokwi.com/projects/475816561802161153 |
 | Repositório remoto (OTA) | https://github.com/henrikmm/motiva-ota-cp2 |
 | Manifesto de versão | https://raw.githubusercontent.com/henrikmm/motiva-ota-cp2/main/version.json |
 | Binário da versão 2.0 | https://raw.githubusercontent.com/henrikmm/motiva-ota-cp2/main/firmware_v2.bin |
@@ -92,8 +92,34 @@ motiva-ota-cp2/
 ├── firmware_v2.ino     código-fonte da versão 2.0
 ├── diagram.json        circuito do projeto Wokwi
 ├── build.sh            script de compilação reprodutível
-└── docs/               evidências dos testes obrigatórios
+├── gerar_relatorio.py  gera o PDF de entrega a partir deste README/código
+└── docs/               evidências reais dos testes obrigatórios (ver abaixo)
 ```
+
+---
+
+## Evidências e metodologia de validação
+
+A fila de compilação gratuita do editor web do Wokwi apresentou instabilidade recorrente
+("Build Servers Busy" / "Failed to fetch") durante os testes do grupo. Para validar a solução sem
+depender dela, os firmwares foram compilados localmente com o `arduino-cli` (o mesmo binário
+publicado no repositório) e a simulação completa foi executada pela **[Wokwi CLI](https://docs.wokwi.com/wokwi-ci/introduction)**
+(`wokwi-cli`), que usa o mesmo motor de simulação em nuvem do editor web — mesma rede `Wokwi-GUEST`,
+mesmo acesso real à internet, mesma gravação OTA.
+
+Os logs abaixo são a saída **real e integral** do Serial Monitor, sem edição de conteúdo:
+
+- [`docs/01_serial_fw1_fluxo_ota_completo.txt`](docs/01_serial_fw1_fluxo_ota_completo.txt) — boot do
+  FW 1.0, três sessões com intervalo de exatamente **48,00 s**, consulta ao manifesto real no
+  GitHub, download de 1.025.120 bytes, gravação OTA e reboot (`SW_CPU_RESET`) já executando o FW 2.0.
+- [`docs/02_serial_fw2_histerese_T1_T2_T3_T2.txt`](docs/02_serial_fw2_histerese_T1_T2_T3_T2.txt) —
+  FW 2.0 confirmando que já está na versão mais recente, e a sequência `T1 → T2 → T3 → T2`
+  demonstrando a histerese nos dois sentidos (mantém ALERTA depois do T1, mantém NORMAL depois do T3).
+- [`docs/03_led_azul_fw1.png`](docs/03_led_azul_fw1.png) — captura do LED RGB azul durante a
+  execução do Firmware 1.0.
+
+O projeto público no link da tabela acima roda exatamente o mesmo código e pode ser reexecutado a
+qualquer momento clicando em **Play**.
 
 ---
 
